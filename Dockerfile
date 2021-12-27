@@ -5,7 +5,7 @@ ENV POETRY_VIRTUALENVS_CREATE 0
 
 USER 1000
 WORKDIR /app
-COPY --chwon 1000:1000 . ./
+COPY --chown=1000:1000 . ./
 
 RUN pip install poetry
 RUN poetry install --no-dev
