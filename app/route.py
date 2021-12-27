@@ -2,7 +2,7 @@ import asyncio
 import json
 from async_timeout import timeout
 from typing import Optional
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, Header, WebSocket
 from pydantic import BaseModel
 from app.db import Application, Session
 from app.redis import redis
@@ -25,8 +25,8 @@ async def index():
 
 
 @router.post('/chat')
-async def post_chat(chat: Chat):
-    app = await get_app(chat.token)
+async def post_chat(chat: Chat, x_oz_token: Optional[str] = Header(None)):
+    app = await get_app(x_oz_token or chat.token)
     if not app:
         return {'code': 'invalid_token'}
 
