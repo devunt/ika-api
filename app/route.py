@@ -84,10 +84,6 @@ async def send_message(app: Application, chat: Chat):
     return {'code': 'sent'}
 
 
-def websocket_loop(message: str):
-    print(message)
-
-
 async def redis_subscribe():
     pubsub = redis.pubsub()
     await pubsub.subscribe('from-ika')
@@ -113,7 +109,10 @@ async def redis_process_event(event: dict):
             origin = '*'
 
         for ws in websockets:
-            if not hasattr(ws.state, 'channels'):
+            if not hasattr(ws.state, 'app'):
+                continue
+
+            if ws.state.app.slug == origin:
                 continue
 
             if event['recipient'].lower() in ws.state.channels:
