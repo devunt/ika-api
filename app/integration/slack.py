@@ -123,7 +123,6 @@ async def verify_request(request: Request):
 
 async def handle_events(request: Request, event: dict):
     event_type = event['type']
-    print(event)
     if event_type == 'message':
         subtype = event.get('subtype')
         if subtype is not None and subtype != 'file_share':
