@@ -4,6 +4,8 @@ from async_timeout import timeout
 from typing import Optional
 from fastapi import APIRouter, Header, WebSocket
 from pydantic import BaseModel
+from starlette.websockets import WebSocketDisconnect
+
 from app.db import Application, Session
 from app.redis import redis, redis_listeners
 
@@ -57,6 +59,8 @@ async def websocket_chat(ws: WebSocket):
                     await ws.send_json(await send_message(ws.state.app, Chat(**data)))
                 else:
                     await ws.send_json({'code': 'unauthorized'})
+    except WebSocketDisconnect:
+        pass
     finally:
         websockets.remove(ws)
 
