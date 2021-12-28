@@ -77,7 +77,8 @@ async def receive_command(request: Request):
         raise HTTPException(status_code=401)
 
     data = await request.form()
-    if not data['channel_id'].startswith('C'):
+    channel_id = data['channel_id']
+    if not channel_id.startswith('C') and not channel_id.startswith('G'):
         return {
             'response_type': 'ephemeral',
             'text': '채널에서만 실행할 수 있는 명령입니다.',
