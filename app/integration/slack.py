@@ -163,7 +163,7 @@ async def handle_events(request: Request, event: dict):
 
         if subtype == 'file_share':
             for file in event['files']:
-                message += f'\n{request.base_url}integration/slack/file/{team_id}/{file["id"]}'
+                message += f'\nhttps://{request.headers["Host"]}integration/slack/file/{team_id}/{file["id"]}'
 
         for line in message.splitlines():
             if not line:
