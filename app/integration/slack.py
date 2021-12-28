@@ -107,6 +107,9 @@ async def handle_events(event: dict):
         if 'subtype' in event:
             return
 
+        if event['text'].startswith('/'):
+            return
+
         session = Session()
         integration = session.query(ChannelIntegration).filter(
             ChannelIntegration.type == 'slack',
@@ -148,6 +151,14 @@ async def handle_command(command: FormData):
         channel = session.query(Channel).filter(Channel.name == target).first()
         if not channel:
             return await responder.send(text=f'오징어 IRC 네트워크에 `{target}` 채널이 등록되어 있지 않습니다.')
+
+        if session.query(ChannelIntegration).filter(ChannelIntegration.type == 'slack',
+                                                    ChannelIntegration.channel == channel.id).first():
+            return await responder.send(text=f'오징어 IRC 네트워크의 `{target}` 채널에는 이미 연동이 등록되어 있습니다.')
+
+        if session.query(ChannelIntegration).filter(ChannelIntegration.type == 'slack',
+                                                    ChannelIntegration.target == f'{command["team_id"]}/{command["channel_id"]}').first():
+            return await responder.send(text=f'이 채널에는 이미 연동이 등록되어 있습니다.')
 
         integration = ChannelIntegration(
             channel=channel.id,
