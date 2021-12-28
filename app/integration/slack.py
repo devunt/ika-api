@@ -1,16 +1,17 @@
 import asyncio
-import hashlib
-import hmac
 import json
-import time
+import re
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Request, Query
+import requests
+from fastapi import APIRouter, HTTPException, Request, Query, Path
+from fastapi.responses import StreamingResponse
 from slack_sdk.errors import SlackApiError
 from slack_sdk.oauth import AuthorizeUrlGenerator
 from fastapi.datastructures import FormData
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.webhook.async_client import AsyncWebhookClient
+from slack_sdk.signature import SignatureVerifier
 from fastapi.responses import RedirectResponse
 
 from app.conf import settings
@@ -19,6 +20,7 @@ from app.redis import redis, redis_listeners
 from app.util import sanitize_nickname
 
 router = APIRouter()
+signature_verifier = SignatureVerifier(settings.slack_signing_secret)
 authorize_url_generator = AuthorizeUrlGenerator(
     client_id=settings.slack_client_id,
     scopes=[
@@ -67,7 +69,7 @@ async def receive_events(request: Request):
     if outer_event_type == 'url_verification':
         return {'challenge': outer_event['challenge']}
     if outer_event_type == 'event_callback':
-        asyncio.create_task(handle_events(outer_event['event']))
+        asyncio.create_task(handle_events(request, outer_event['event']))
         return {}
 
 
@@ -90,23 +92,40 @@ async def receive_command(request: Request):
     }
 
 
+@router.get('/file/{team_id}/{file_id}')
+async def file_proxy(team_id: str = Path(...), file_id: str = Path(...)):
+    session = Session()
+    installation = session.query(SlackInstallation).filter(SlackInstallation.team_id == team_id).one()
+    slack = AsyncWebClient(installation.access_token)
+
+    file = await slack.files_info(file=file_id)
+
+    def iter_file():
+        resp = requests.get(
+            url=file['file']['url_private'],
+            headers={'Authorization': 'Bearer ' + installation.access_token},
+            stream=True,
+        )
+        for chunk in resp.iter_content(chunk_size=1024):
+            yield chunk
+
+    return StreamingResponse(iter_file(), media_type=file['file']['mimetype'])
+
+
 async def verify_request(request: Request):
-    timestamp = request.headers.get("X-Slack-Request-Timestamp")
-    signature = request.headers.get("X-Slack-Signature")
-
-    if abs(int(timestamp) - time.time()) > 60 * 5:
-        return False
-
-    msg = b'v0:' + timestamp.encode() + b':' + await request.body()
-    actual_signature = f'v0={hmac.new(settings.slack_signing_secret, msg, hashlib.sha256).hexdigest()}'
-
-    return actual_signature == signature
+    return signature_verifier.is_valid(
+        body=await request.body(),
+        timestamp=request.headers.get("X-Slack-Request-Timestamp"),
+        signature=request.headers.get("X-Slack-Signature"),
+    )
 
 
-async def handle_events(event: dict):
+async def handle_events(request: Request, event: dict):
     event_type = event['type']
+    print(event)
     if event_type == 'message':
-        if 'subtype' in event:
+        subtype = event.get('subtype')
+        if subtype is not None and subtype != 'file_share':
             return
 
         if event['text'].startswith('/'):
@@ -115,22 +134,47 @@ async def handle_events(event: dict):
         session = Session()
         integration = session.query(ChannelIntegration).filter(
             ChannelIntegration.type == 'slack',
-            ChannelIntegration.target == event['team'] + '/' + event['channel'],
+            ChannelIntegration.target.contains(event['channel']),
             ChannelIntegration.is_authorized == True,
         ).first()
         if not integration:
             return
 
-        installation = session.query(SlackInstallation).filter(SlackInstallation.team_id == event['team']).first()
+        team_id = integration.target.split('/')[0]
+        installation = session.query(SlackInstallation).filter(
+            SlackInstallation.team_id == integration.target.split('/')[0]
+        ).first()
         slack = AsyncWebClient(installation.access_token)
         sender = sanitize_nickname((await slack.users_info(user=event['user']))['user']['profile']['display_name'])
-        message = event['text'].splitlines()[0]
-        await redis.publish('to-ika', json.dumps({
-            'event': 'chat_message',
-            'sender': f'{sender}+!integration@integrations/{integration.type}/{integration.id}',
-            'recipient': integration.channels.name,
-            'message': message,
-        }))
+
+        message = event['text']
+
+        print(f'Route message from Slack[{event["channel"]}] to IRC[{integration.channels.name}]: {message}')
+
+        for mention in re.findall(r'<@([UW].+?)>', message):
+            user = await slack.users_info(user=mention)
+            message = message.replace(f'<@{mention}>', '@' + user['user']['profile']['display_name'])
+
+        for multiline_code in re.findall('(```.+?```)', message, re.DOTALL):
+            code = multiline_code.replace('\n', '`\n`')
+            message = message.replace(multiline_code, code[2:-2])
+
+        message = message.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+
+        if subtype == 'file_share':
+            for file in event['files']:
+                message += f'\n{request.base_url}integration/slack/file/{team_id}/{file["id"]}'
+
+        for line in message.splitlines():
+            if not line:
+                continue
+
+            await redis.publish('to-ika', json.dumps({
+                'event': 'chat_message',
+                'sender': f'{sender}+!integration@integrations/{integration.type}/{integration.id}',
+                'recipient': integration.channels.name,
+                'message': line,
+            }))
 
 
 async def handle_command(command: FormData):
@@ -223,14 +267,31 @@ async def redis_listener(event: dict):
         if not integration:
             return
 
-        team, channel = integration.target.split('/')
+        team, slack_channel = integration.target.split('/')
         installation = session.query(SlackInstallation).filter(SlackInstallation.team_id == team).first()
         slack = AsyncWebClient(installation.access_token)
-        await slack.chat_postMessage(
-            channel=channel,
-            username=sender,
-            text=event['message'],
-        )
+
+        message = event['message']
+
+        print(f'Route message from IRC[{channel.name}] to Slack[{slack_channel}]: {message}')
+
+        message = message.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+        users = await slack.users_list()
+        for member in users['members']:
+            if member['profile']['display_name'].strip():
+                message = re.sub(re.escape(member['profile']['display_name']) + '[:, ]', f'<@{member["id"]}>', message)
+
+        while True:
+            response = await slack.chat_postMessage(
+                channel=slack_channel,
+                username=sender,
+                text=message,
+                mrkdwn=False,
+            )
+
+            if response['ok']:
+                break
 
 
 redis_listeners.append(redis_listener)
