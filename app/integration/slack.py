@@ -171,7 +171,7 @@ async def handle_events(request: Request, event: dict):
 
             await redis.publish('to-ika', json.dumps({
                 'event': 'chat_message',
-                'sender': f'{sender}+!integration@integrations/{integration.type}/{integration.id}',
+                'sender': f'{sender}＠s!integration@integrations/{integration.type}/{integration.id}',
                 'recipient': integration.channels.name,
                 'message': line,
             }))
