@@ -26,6 +26,7 @@ authorize_url_generator = AuthorizeUrlGenerator(
     scopes=[
         'commands',
         'users:read',
+        'files:read',
         'channels:read',
         'channels:history',
         'groups:read',
