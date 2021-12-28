@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request, Query
+from slack_sdk.errors import SlackApiError
 from slack_sdk.oauth import AuthorizeUrlGenerator
 from fastapi.datastructures import FormData
 from slack_sdk.web.async_client import AsyncWebClient
@@ -137,7 +138,11 @@ async def handle_command(command: FormData):
     session = Session()
     installation = session.query(SlackInstallation).filter(SlackInstallation.team_id == command['team_id']).first()
     slack = AsyncWebClient(installation.access_token)
-    if installation.bot_user_id not in (await slack.conversations_members(channel=command['channel_id']))['members']:
+    try:
+        members = await slack.conversations_members(channel=command['channel_id'])
+    except SlackApiError:
+        return await responder.send(text="앱을 채널에 먼저 설치해주세요.")
+    if installation.bot_user_id not in members['members']:
         return await responder.send(text="앱을 채널에 먼저 설치해주세요.")
 
     params = command['text'].strip().split(' ')
