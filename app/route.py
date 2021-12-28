@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, WebSocket
 from pydantic import BaseModel
 from app.db import Application, Session
-from app.redis import redis
+from app.redis import redis, redis_listeners
 
 
 class Chat(BaseModel):
@@ -84,22 +84,7 @@ async def send_message(app: Application, chat: Chat):
     return {'code': 'sent'}
 
 
-async def redis_subscribe():
-    pubsub = redis.pubsub()
-    await pubsub.subscribe('from-ika')
-    while True:
-        try:
-            async with timeout(1):
-                message = await pubsub.get_message(ignore_subscribe_messages=True)
-                if message:
-                    data = json.loads(message['data'])
-                    await redis_process_event(data)
-                await asyncio.sleep(0.01)
-        except asyncio.TimeoutError:
-            pass
-
-
-async def redis_process_event(event: dict):
+async def redis_listener(event: dict):
     if event['event'] == 'chat_message':
         if 'app@apps/' in event['sender']:
             sender = event['sender'].split('+')[0]
@@ -125,4 +110,4 @@ async def redis_process_event(event: dict):
                 })
 
 
-asyncio.create_task(redis_subscribe())
+redis_listeners.append(redis_listener)

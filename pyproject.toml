@@ -7,10 +7,14 @@ authors = ["devunt <devunt@gmail.com>"]
 [tool.poetry.dependencies]
 python = "^3.10"
 fastapi = "^0.70.1"
-uvicorn = {extras = ["standard"], version = "^0.16.0"}
+uvicorn = {version = "^0.15.0", extras = ["standard"]}
 SQLAlchemy = "^1.4.29"
 mysqlclient = "^2.1.0"
 aioredis = "^2.0.0"
+python-multipart = "^0.0.5"
+requests = "^2.26.0"
+slack-sdk = "^3.13.0"
+aiohttp = "^3.8.1"
 
 [tool.poetry.dev-dependencies]
 
