@@ -159,6 +159,7 @@ async def handle_events(request: Request, event: dict):
             code = multiline_code.replace('\n', '`\n`')
             message = message.replace(multiline_code, code[2:-2])
 
+        message = re.sub(r'<(.+?)(\|.+)?>', r'\1', message)
         message = message.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
 
         if subtype == 'file_share':
