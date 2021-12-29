@@ -80,12 +80,14 @@ async def receive_command(request: Request):
         raise HTTPException(status_code=401)
 
     data = await request.form()
-    channel_id = data['channel_id']
-    if not channel_id.startswith('C') and not channel_id.startswith('G'):
+
+    slack_channel_id = data['channel_id']
+    if not slack_channel_id.startswith('C') and not slack_channel_id.startswith('G'):
         return {
             'response_type': 'ephemeral',
             'text': '채널에서만 실행할 수 있는 명령입니다.',
         }
+
     asyncio.create_task(handle_command(data))
 
     return {
@@ -132,41 +134,44 @@ async def handle_events(request: Request, event: dict):
             return
 
         session = Session()
+
+        slack_channel_id = event['channel']
+
         integration = session.query(ChannelIntegration).filter(
             ChannelIntegration.type == 'slack',
-            ChannelIntegration.target.contains(event['channel']),
+            ChannelIntegration.target == slack_channel_id,
             ChannelIntegration.is_authorized == True,
         ).first()
         if not integration:
             return
 
-        team_id = integration.target.split('/')[0]
-        installation = session.query(SlackInstallation).filter(
-            SlackInstallation.team_id == integration.target.split('/')[0]
-        ).first()
+        slack_team_id = integration.extra
+
+        installation = session.query(SlackInstallation).filter(SlackInstallation.team_id == slack_team_id).first()
         slack = AsyncWebClient(installation.access_token)
-        sender = sanitize_nickname((await slack.users_info(user=event['user']))['user']['profile']['display_name'])
 
-        message = event['text']
+        content = event['text']
 
-        print(f'Route message from Slack[{event["channel"]}] to IRC[{integration.channels.name}]: {message}')
+        print(f'Route message from Slack[{slack_channel_id}] to IRC[{integration.channels.name}]: {content}')
 
-        for mention in re.findall(r'<@([UW].+?)>', message):
+        for mention in re.findall(r'<@([UW].+?)>', content):
             user = await slack.users_info(user=mention)
-            message = message.replace(f'<@{mention}>', '@' + user['user']['profile']['display_name'])
+            content = content.replace(f'<@{mention}>', '@' + user['user']['profile']['display_name'])
 
-        for multiline_code in re.findall('(```.+?```)', message, re.DOTALL):
-            code = multiline_code.replace('\n', '`\n`')
-            message = message.replace(multiline_code, code[2:-2])
+        for multi_line_code in re.findall(r'(```.+?```)', content, re.DOTALL):
+            single_line_codes = multi_line_code.replace('\n', '`\n`')[2:-2]
+            content = content.replace(multi_line_code, single_line_codes)
 
-        message = re.sub(r'<(.+?)(\|.+)?>', r'\1', message)
-        message = message.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+        content = re.sub(r'<(.+?)(\|.+)?>', r'\1', content)
+        content = content.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
 
         if subtype == 'file_share':
             for file in event['files']:
-                message += f'\nhttps://{request.headers["Host"]}integration/slack/file/{team_id}/{file["id"]}'
+                content += f'\nhttps://{request.headers["Host"]}integration/slack/file/{slack_team_id}/{file["id"]}'
 
-        for line in message.splitlines():
+        sender = sanitize_nickname((await slack.users_info(user=event['user']))['user']['profile']['display_name'])
+
+        for line in content.splitlines():
             if not line:
                 continue
 
@@ -179,42 +184,45 @@ async def handle_events(request: Request, event: dict):
 
 
 async def handle_command(command: FormData):
+    session = Session()
     responder = AsyncWebhookClient(command['response_url'])
 
-    session = Session()
     installation = session.query(SlackInstallation).filter(SlackInstallation.team_id == command['team_id']).first()
     slack = AsyncWebClient(installation.access_token)
+
     try:
         members = await slack.conversations_members(channel=command['channel_id'])
     except SlackApiError:
         return await responder.send(text="앱을 채널에 먼저 설치해주세요.")
-    if installation.bot_user_id not in members['members']:
-        return await responder.send(text="앱을 채널에 먼저 설치해주세요.")
+    else:
+        if installation.bot_user_id not in members['members']:
+            return await responder.send(text="앱을 채널에 먼저 설치해주세요.")
 
     params = command['text'].strip().split(' ')
     subcommand = params[0]
+
+    slack_team_id = command['team_id']
+    slack_channel_id = command['channel_id']
+
     if subcommand == 'attach':
         if len(params) != 2:
             return await responder.send(text='채널명을 입력해주세요.')
 
-        target = command['text'].split(' ')[1]
-
-        channel = session.query(Channel).filter(Channel.name == target).first()
-        if not channel:
-            return await responder.send(text=f'오징어 IRC 네트워크에 `{target}` 채널이 등록되어 있지 않습니다.')
+        irc_channel_name = command['text'].split(' ')[1]
 
         if session.query(ChannelIntegration).filter(ChannelIntegration.type == 'slack',
-                                                    ChannelIntegration.channel == channel.id).first():
-            return await responder.send(text=f'오징어 IRC 네트워크의 `{target}` 채널에는 이미 연동이 등록되어 있습니다.')
-
-        if session.query(ChannelIntegration).filter(ChannelIntegration.type == 'slack',
-                                                    ChannelIntegration.target == f'{command["team_id"]}/{command["channel_id"]}').first():
+                                                    ChannelIntegration.target == slack_channel_id).first():
             return await responder.send(text=f'이 채널에는 이미 연동이 등록되어 있습니다.')
 
+        irc_channel = session.query(Channel).filter(Channel.name == irc_channel_name).first()
+        if not irc_channel:
+            return await responder.send(text=f'오징어 IRC 네트워크에 `{irc_channel_name}` 채널이 등록되어 있지 않습니다.')
+
         integration = ChannelIntegration(
-            channel=channel.id,
+            channel=irc_channel.id,
             type='slack',
-            target=f'{command["team_id"]}/{command["channel_id"]}',
+            target=slack_channel_id,
+            extra=slack_team_id,
             is_authorized=False,
             created_at=datetime.now()
         )
@@ -223,76 +231,128 @@ async def handle_command(command: FormData):
 
         await redis.publish('to-ika', json.dumps({
             'event': 'add_integration',
-            'channel': target,
+            'channel': irc_channel_name,
             'integrationId': integration.id,
         }))
 
         return await responder.send(
             response_type='in_channel',
-            text=f'오징어 IRC 네트워크의 `{target}` 채널에 연동을 요청했습니다.',
+            text=f'오징어 IRC 네트워크의 `{irc_channel_name}` 채널에 연동을 요청했습니다.',
         )
+
     elif subcommand == 'detach':
-        target = command['channel_id']
-
-        integration = session.query(ChannelIntegration).filter(ChannelIntegration.target == target).first()
+        integration = session.query(ChannelIntegration).filter(
+            ChannelIntegration.type == 'slack',
+            ChannelIntegration.target == slack_channel_id,
+        ).first()
         if not integration:
-            return await responder.send(text=f'오징어 IRC 네트워크 채널에 연동되어 있지 않습니다.')
+            return await responder.send(text='이 채널은 오징어 IRC 네트워크 채널과 연동되어 있지 않습니다.')
 
-        await redis.publish('to-ika', json.dumps({
-            'event': 'remove_integration',
-            'channel': integration.channels.name,
-            'integrationId': integration.id,
-        }))
+        integration_id = integration.id
+        irc_channel_name = integration.channels.name
 
         session.delete(integration)
         session.commit()
+
+        await redis.publish('to-ika', json.dumps({
+            'event': 'remove_integration',
+            'irc_channel': irc_channel_name,
+            'integrationId': integration_id,
+        }))
+
+        return await responder.send(text=f'오징어 IRC 네트워크 `{irc_channel_name}` 채널과의 연동이 해제되었습니다.')
     else:
-        return await responder.send(text='사용법: `/ozinger attach #irc_channel`, `/ozinger detach`')
+        return await responder.send(text='사용법: `/ozinger attach #irc_channel_name`, `/ozinger detach`')
 
 
 async def redis_listener(event: dict):
+    session = Session()
+
     if event['event'] == 'chat_message':
         sender = event['sender'].split('!')[0]
 
-        session = Session()
-
-        channel = session.query(Channel).filter(Channel.name == event['recipient']).first()
-        if not channel:
+        irc_channel = session.query(Channel).filter(Channel.name == event['recipient']).first()
+        if not irc_channel:
             return
 
-        integration = session.query(ChannelIntegration).filter(
+        integrations = session.query(ChannelIntegration).filter(
             ChannelIntegration.type == 'slack',
-            ChannelIntegration.channel == channel.id,
+            ChannelIntegration.channel == irc_channel.id,
             ChannelIntegration.is_authorized == True,
-        ).first()
-        if not integration:
+        ).all()
+        if not integrations:
             return
 
-        team, slack_channel = integration.target.split('/')
-        installation = session.query(SlackInstallation).filter(SlackInstallation.team_id == team).first()
+        content = event['message']
+        content = content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+        for integration in integrations:
+            slack_channel_id = integration.target
+            slack_team_id = integration.extra
+
+            installation = session.query(SlackInstallation).filter(SlackInstallation.team_id == slack_team_id).first()
+
+            slack = AsyncWebClient(installation.access_token)
+
+            print(f'Route message from IRC[{irc_channel.name}] to Slack[{slack_channel_id}]: {content}')
+
+            specialized_content = content
+            slack_team_members = await slack.users_list()
+            for member in slack_team_members['members']:
+                if member['profile']['display_name'].strip():
+                    specialized_content = re.sub(
+                        re.escape(member['profile']['display_name']) + r'[:, ]',
+                        f'<@{member["id"]}>',
+                        specialized_content,
+                    )
+
+            while True:
+                response = await slack.chat_postMessage(
+                    channel=slack_channel_id,
+                    username=sender,
+                    text=specialized_content,
+                    mrkdwn=False,
+                )
+
+                if response['ok']:
+                    break
+
+    elif event['event'] == 'add_integration':
+        integration = session.get(ChannelIntegration, event['integrationId'])
+        if integration.type != 'slack':
+            return
+
+        slack_channel_id = integration.target
+        slack_team_id = integration.extra
+
+        installation = session.query(SlackInstallation).filter(SlackInstallation.team_id == slack_team_id).one()
         slack = AsyncWebClient(installation.access_token)
 
-        message = event['message']
+        await slack.chat_postMessage(
+            channel=slack_channel_id,
+            text=f'오징어 IRC 네트워크 `{integration.channels.name}` 채널과 연동되었습니다.',
+        )
 
-        print(f'Route message from IRC[{channel.name}] to Slack[{slack_channel}]: {message}')
+    elif event['event'] == 'remove_integration':
+        integration = session.get(ChannelIntegration, event['integrationId'])
+        if integration.type != 'slack':
+            return
 
-        message = message.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        slack_channel_id = integration.target
+        slack_team_id = integration.extra
 
-        users = await slack.users_list()
-        for member in users['members']:
-            if member['profile']['display_name'].strip():
-                message = re.sub(re.escape(member['profile']['display_name']) + '[:, ]', f'<@{member["id"]}>', message)
+        installation = session.query(SlackInstallation).filter(SlackInstallation.team_id == slack_team_id).one()
+        slack = AsyncWebClient(installation.access_token)
 
-        while True:
-            response = await slack.chat_postMessage(
-                channel=slack_channel,
-                username=sender,
-                text=message,
-                mrkdwn=False,
-            )
+        irc_channel_name = integration.channels.name
 
-            if response['ok']:
-                break
+        session.delete(integration)
+        session.commit()
+
+        await slack.chat_postMessage(
+            channel=slack_channel_id,
+            text=f'오징어 IRC 네트워크 `{irc_channel_name}` 채널과의 연동이 연동되었습니다.',
+        )
 
 
 redis_listeners.append(redis_listener)

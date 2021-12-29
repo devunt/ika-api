@@ -21,7 +21,10 @@ async def redis_subscribe():
                 if message:
                     data = json.loads(message['data'])
                     for listener in redis_listeners:
-                        await listener(data)
+                        try:
+                            asyncio.create_task(listener(data))
+                        except:
+                            pass
                 await asyncio.sleep(0.01)
         except asyncio.TimeoutError:
             pass
