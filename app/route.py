@@ -27,8 +27,8 @@ async def index():
 
 @router.get('/snippets/{id}', response_class=PlainTextResponse)
 async def snippet(id: str = Path(...)):
-    session = Session()
-    return session.get(Snippet, id).content
+    with Session() as session:
+        return session.get(Snippet, id).content
 
 
 @router.post('/chat')
