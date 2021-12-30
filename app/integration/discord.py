@@ -10,7 +10,7 @@ from discord import Bot, Message, Permissions, Interaction, ApplicationContext, 
 from discord.utils import oauth_url
 
 from app.conf import settings
-from app.db import Session, Channel, ChannelIntegration
+from app.db import Session, Channel, ChannelIntegration, Snippet
 from app.redis import redis_listeners, redis
 from app.util import sanitize_nickname
 
@@ -73,16 +73,26 @@ async def on_message(message: Message):
     for mention in message.mentions:
         content = content.replace(f'<@!{mention.id}>', f'@{mention.name}')
 
-    for multi_line_code in re.findall(r'(```.+?```)', content, re.DOTALL):
-        single_line_codes = multi_line_code.replace('\n', '`\n`')[2:-2]
-        content = content.replace(multi_line_code, single_line_codes)
+    for full, code in re.findall(r'(```(.+?)```)', content, re.DOTALL):
+        code = '\n'.join(map(lambda x: f'`{x}`', code.strip().splitlines()))
+        content = content.replace(full, code)
+
+    print(content)
 
     for attachment in message.attachments:
         content += f'\n{attachment.url}'
 
+    lines = content.splitlines()
+    if len(lines) > 5:
+        snippet = Snippet(content=content)
+        session.add(snippet)
+        session.commit()
+
+        lines = [f'https://api.ozinger.org/snippets/{snippet.id}']
+
     sender = sanitize_nickname(message.author.display_name)
 
-    for line in content.splitlines():
+    for line in lines:
         if not line:
             continue
 
@@ -172,6 +182,9 @@ async def redis_listener(event: dict):
 
     if event['event'] == 'chat_message':
         sender = event['sender'].split('!')[0]
+        sender_parts = sender.split('＠')
+        if len(sender_parts) == 2 and sender_parts[1] == 'd':
+            return
 
         irc_channel = session.query(Channel).filter(Channel.name == event['recipient']).first()
         if not irc_channel:

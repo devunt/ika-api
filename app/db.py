@@ -1,4 +1,6 @@
-from sqlalchemy import create_engine, Column, Integer, String
+import uuid
+
+from sqlalchemy import create_engine, Column, Integer, String, Text
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -21,6 +23,12 @@ class SlackInstallation(Base):
     team_id = Column(String(255), unique=True)
     bot_user_id = Column(String(255))
     access_token = Column(String(255))
+
+
+class Snippet(Base):
+    __tablename__ = 'snippets'
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    content = Column(Text)
 
 
 Base.metadata.create_all(engine)

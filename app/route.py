@@ -1,12 +1,11 @@
-import asyncio
 import json
-from async_timeout import timeout
 from typing import Optional
-from fastapi import APIRouter, Header, WebSocket
+from fastapi import APIRouter, Header, WebSocket, Path
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from starlette.websockets import WebSocketDisconnect
 
-from app.db import Application, Session
+from app.db import Application, Session, Snippet
 from app.redis import redis, redis_listeners
 
 
@@ -24,6 +23,12 @@ websockets = []
 @router.get('/')
 async def index():
     return {}
+
+
+@router.get('/snippets/{id}', response_class=PlainTextResponse)
+async def snippet(id: str = Path(...)):
+    session = Session()
+    return session.get(Snippet, id).content
 
 
 @router.post('/chat')

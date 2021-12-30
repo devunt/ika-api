@@ -15,7 +15,7 @@ from slack_sdk.signature import SignatureVerifier
 from fastapi.responses import RedirectResponse
 
 from app.conf import settings
-from app.db import Session, Channel, ChannelIntegration, SlackInstallation
+from app.db import Session, Channel, ChannelIntegration, SlackInstallation, Snippet
 from app.redis import redis, redis_listeners
 from app.util import sanitize_nickname
 
@@ -158,9 +158,9 @@ async def handle_events(request: Request, event: dict):
             user = await slack.users_info(user=mention)
             content = content.replace(f'<@{mention}>', '@' + user['user']['profile']['display_name'])
 
-        for multi_line_code in re.findall(r'(```.+?```)', content, re.DOTALL):
-            single_line_codes = multi_line_code.replace('\n', '`\n`')[2:-2]
-            content = content.replace(multi_line_code, single_line_codes)
+        for full, code in re.findall(r'(```(.+?)```)', content, re.DOTALL):
+            code = '\n'.join(map(lambda x: f'`{x}`', code.strip().splitlines()))
+            content = content.replace(full, code)
 
         content = re.sub(r'<(.+?)(\|.+)?>', r'\1', content)
         content = content.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
@@ -169,9 +169,17 @@ async def handle_events(request: Request, event: dict):
             for file in event['files']:
                 content += f'\nhttps://{request.headers["Host"]}integration/slack/file/{slack_team_id}/{file["id"]}'
 
+        lines = content.splitlines()
+        if len(lines) > 5:
+            snippet = Snippet(content=content)
+            session.add(snippet)
+            session.commit()
+
+            lines = [f'https://api.ozinger.org/snippets/{snippet.id}']
+
         sender = sanitize_nickname((await slack.users_info(user=event['user']))['user']['profile']['display_name'])
 
-        for line in content.splitlines():
+        for line in lines:
             if not line:
                 continue
 
@@ -270,6 +278,9 @@ async def redis_listener(event: dict):
 
     if event['event'] == 'chat_message':
         sender = event['sender'].split('!')[0]
+        sender_parts = sender.split('＠')
+        if len(sender_parts) == 2 and sender_parts[1] == 's':
+            return
 
         irc_channel = session.query(Channel).filter(Channel.name == event['recipient']).first()
         if not irc_channel:
