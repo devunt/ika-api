@@ -366,7 +366,7 @@ async def redis_listener(event: dict):
 
             await slack.chat_postMessage(
                 channel=slack_channel_id,
-                text=f'오징어 IRC 네트워크 `{irc_channel_name}` 채널과의 연동이 연동되었습니다.',
+                text=f'오징어 IRC 네트워크 `{irc_channel_name}` 채널과의 연동이 해제되었습니다.',
             )
 
 
