@@ -167,7 +167,7 @@ async def handle_events(request: Request, event: dict):
 
             if subtype == 'file_share':
                 for file in event['files']:
-                    content += f'\nhttps://{request.headers["Host"]}integration/slack/file/{slack_team_id}/{file["id"]}'
+                    content += f'\nhttps://api.ozinger.org/integration/slack/file/{slack_team_id}/{file["id"]}'
 
             lines = content.splitlines()
             if len(lines) > 5:
