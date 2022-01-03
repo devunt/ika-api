@@ -204,7 +204,7 @@ async def redis_listener(event: dict):
                 specialized_content = content
                 for member in discord_channel.members:
                     specialized_content = re.sub(
-                        re.escape(member.display_name) + r'[:, ]',
+                        r'(^| )' + re.escape(member.display_name) + r'[:, ]',
                         f'<@!{member.id}>',
                         specialized_content,
                     )

@@ -311,7 +311,7 @@ async def redis_listener(event: dict):
                 for member in slack_team_members['members']:
                     if member['profile']['display_name'].strip():
                         specialized_content = re.sub(
-                            re.escape(member['profile']['display_name']) + r'[:, ]',
+                            r'(^| )' + re.escape(member['profile']['display_name']) + r'[:, ]',
                             f'<@{member["id"]}>',
                             specialized_content,
                         )
