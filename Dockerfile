@@ -10,4 +10,4 @@ RUN pip install poetry
 RUN poetry install --no-dev
 
 USER 1000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "error"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
