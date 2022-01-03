@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 from datetime import datetime
+from hashlib import md5
 
 from fastapi import APIRouter, HTTPException, Request, Query, Path
 from fastapi.responses import RedirectResponse
@@ -181,6 +182,9 @@ async def redis_listener(event: dict):
             if len(sender_parts) == 2 and sender_parts[1] == 'd':
                 return
 
+            sender_color = md5(sender.encode()).hexdigest()[:6]
+            sender_avatar_url = f'https://ui-avatars.com/api/?name={sender}&background={sender_color}'
+
             irc_channel = session.query(Channel).filter(Channel.name == event['recipient']).first()
             if not irc_channel:
                 return
@@ -214,6 +218,7 @@ async def redis_listener(event: dict):
                         await webhook.send(
                             content=specialized_content,
                             username=sender,
+                            avatar_url=sender_avatar_url,
                             allowed_mentions=AllowedMentions(
                                 everyone=False,
                                 users=True,

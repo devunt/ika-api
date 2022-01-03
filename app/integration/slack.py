@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 from datetime import datetime
+from hashlib import md5
 
 import requests
 from fastapi import APIRouter, HTTPException, Request, Query, Path
@@ -281,6 +282,9 @@ async def redis_listener(event: dict):
             if len(sender_parts) == 2 and sender_parts[1] == 's':
                 return
 
+            sender_color = md5(sender.encode()).hexdigest()[:6]
+            sender_avatar_url = f'https://ui-avatars.com/api/?name={sender}&background={sender_color}'
+
             irc_channel = session.query(Channel).filter(Channel.name == event['recipient']).first()
             if not irc_channel:
                 return
@@ -320,6 +324,7 @@ async def redis_listener(event: dict):
                     response = await slack.chat_postMessage(
                         channel=slack_channel_id,
                         username=sender,
+                        icon_url=sender_avatar_url,
                         text=specialized_content,
                         mrkdwn=False,
                     )
