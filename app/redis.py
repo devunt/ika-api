@@ -23,8 +23,8 @@ async def redis_subscribe():
                     for listener in redis_listeners:
                         try:
                             asyncio.create_task(listener(data))
-                        except:
-                            pass
+                        except Exception as e:
+                            print(e)
                 await asyncio.sleep(0.01)
         except asyncio.TimeoutError:
             pass
